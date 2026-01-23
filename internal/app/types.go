@@ -18,3 +18,8 @@ type Session struct {
 	RelTime string    `json:"rel_time"`
 	Preview string    `json:"preview"`
 }
+
+type ModelOption struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}

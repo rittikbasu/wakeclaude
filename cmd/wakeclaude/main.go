@@ -47,7 +47,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	result, err := tui.Run(projects)
+	models := []app.ModelOption{
+		{Label: "Default (auto)", Value: "auto"},
+		{Label: "Sonnet", Value: "sonnet"},
+		{Label: "Opus", Value: "opus"},
+		{Label: "Haiku", Value: "haiku"},
+	}
+	result, err := tui.Run(projects, models)
 	if err != nil {
 		if errors.Is(err, tui.ErrUserQuit) {
 			os.Exit(1)

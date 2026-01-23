@@ -28,8 +28,8 @@ const (
 
 var ErrUserQuit = errors.New("user quit")
 
-func Run(projects []app.Project) (Result, error) {
-	m := newModel(projects)
+func Run(projects []app.Project, models []app.ModelOption) (Result, error) {
+	m := newModel(projects, models)
 	program := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := program.Run()
 	if err != nil {
@@ -69,43 +69,35 @@ type listItem struct {
 }
 
 type model struct {
-	stage    stage
-	projects []app.Project
-	sessions []app.Session
-	project  app.Project
+	stage           stage
+	projects        []app.Project
+	sessions        []app.Session
+	project         app.Project
 	selectedSession *app.Session
 	selectedNew     bool
-	models          []modelOption
+	models          []app.ModelOption
 
 	searchValue string
-	items  []listItem
-	all    []listItem
-	cursor int
-	offset int
-	width  int
-	height int
+	items       []listItem
+	all         []listItem
+	cursor      int
+	offset      int
+	width       int
+	height      int
 
 	result *Result
 	err    error
 }
 
-type modelOption struct {
-	Label string
-	Value string
-}
+func newModel(projects []app.Project, models []app.ModelOption) model {
+	if len(models) == 0 {
+		models = []app.ModelOption{{Label: "Default (auto)", Value: "auto"}}
+	}
 
-var defaultModels = []modelOption{
-	{Label: "Default (auto)", Value: "auto"},
-	{Label: "Sonnet (latest)", Value: "sonnet"},
-	{Label: "Opus (latest)", Value: "opus"},
-	{Label: "Haiku (latest)", Value: "haiku"},
-}
-
-func newModel(projects []app.Project) model {
 	m := model{
 		stage:    stageProjects,
 		projects: projects,
-		models:   defaultModels,
+		models:   models,
 	}
 
 	m.setProjectItems()
@@ -181,47 +173,48 @@ func (m model) View() string {
 	}
 
 	var b strings.Builder
+	lineWidth := renderWidth(m.width)
 	for _, line := range asciiArtLines {
-		b.WriteString(renderLine(line, safeWidth(m.width)))
+		b.WriteString(renderLine(line, lineWidth))
 		b.WriteString("\n")
 	}
-	b.WriteString(renderLine("Schedule prompts to run at specific times with Wake Claude.", safeWidth(m.width)))
+	b.WriteString(renderLine("Schedule prompts to run at specific times with Wake Claude.", lineWidth))
 	b.WriteString("\n")
 
 	switch m.stage {
 	case stageProjects:
-		b.WriteString(renderLine("Select a project to continue.", safeWidth(m.width)))
+		b.WriteString(renderLine("Select a project to continue.", lineWidth))
 		b.WriteString("\n")
 	case stageSessions:
 		label := m.project.DisplayName
 		if label == "" {
 			label = m.project.Path
 		}
-		b.WriteString(renderLine(fmt.Sprintf("Project: %s", label), safeWidth(m.width)))
+		b.WriteString(renderLine(fmt.Sprintf("Project: %s", label), lineWidth))
 		b.WriteString("\n")
-		b.WriteString(renderLine("Select a session to resume (or start a new one).", safeWidth(m.width)))
+		b.WriteString(renderLine("Select a session to resume (or start a new one).", lineWidth))
 		b.WriteString("\n")
 	case stageModels:
 		label := m.project.DisplayName
 		if label == "" {
 			label = m.project.Path
 		}
-		b.WriteString(renderLine(fmt.Sprintf("Project: %s", label), safeWidth(m.width)))
+		b.WriteString(renderLine(fmt.Sprintf("Project: %s", label), lineWidth))
 		b.WriteString("\n")
 		if m.selectedSession != nil {
-			b.WriteString(renderLine(fmt.Sprintf("Session: %s", m.selectedSession.Preview), safeWidth(m.width)))
+			b.WriteString(renderLine(fmt.Sprintf("Session: %s", m.selectedSession.Preview), lineWidth))
 			b.WriteString("\n")
 		} else if m.selectedNew {
-			b.WriteString(renderLine("Session: Start a new session", safeWidth(m.width)))
+			b.WriteString(renderLine("Session: Start a new session", lineWidth))
 			b.WriteString("\n")
 		}
-		b.WriteString(renderLine("Select a Claude model.", safeWidth(m.width)))
+		b.WriteString(renderLine("Select a Claude model.", lineWidth))
 		b.WriteString("\n")
 	}
 
 	b.WriteString(m.renderSearchLine())
 	b.WriteString("\n")
-	b.WriteString(strings.Repeat("-", max(10, min(safeWidth(m.width), 60))))
+	b.WriteString(strings.Repeat("-", max(10, min(lineWidth, 60))))
 	b.WriteString("\n")
 
 	if len(m.items) == 0 {
@@ -230,7 +223,7 @@ func (m model) View() string {
 		start, end := m.visibleRange()
 		for i := start; i < end; i++ {
 			selected := i == m.cursor
-			b.WriteString(renderItem(m.items[i], selected, safeWidth(m.width)))
+			b.WriteString(renderItem(m.items[i], selected, lineWidth))
 			b.WriteString("\n")
 		}
 	}
@@ -370,7 +363,7 @@ func (m *model) handleSearchInput(msg tea.KeyMsg) bool {
 func (m model) renderSearchLine() string {
 	value := m.searchValue
 	line := fmt.Sprintf("Search: %s_", value)
-	return renderLine(line, safeWidth(m.width))
+	return renderLine(line, renderWidth(m.width))
 }
 
 func (m *model) selectCurrent() tea.Cmd {
@@ -502,15 +495,7 @@ func renderItem(item listItem, selected bool, width int) string {
 }
 
 func renderLine(text string, width int) string {
-	text = truncateToWidth(text, width)
-	if width <= 0 {
-		return text
-	}
-	trimmed := []rune(text)
-	if len(trimmed) >= width {
-		return text
-	}
-	return text + strings.Repeat(" ", width-len(trimmed))
+	return truncateToWidth(text, width)
 }
 
 func sessionCountLabel(count int) string {
@@ -541,6 +526,14 @@ func trimLastRune(value string) string {
 		return ""
 	}
 	return string(runes[:len(runes)-1])
+}
+
+func renderWidth(width int) int {
+	width = safeWidth(width)
+	if width <= 1 {
+		return width
+	}
+	return width - 1
 }
 
 func safeWidth(width int) int {

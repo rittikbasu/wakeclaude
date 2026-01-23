@@ -55,23 +55,6 @@ func NormalizePath(path string) (string, error) {
 	return filepath.Clean(abs), nil
 }
 
-func RequireAbsolutePath(path string) (string, error) {
-	expanded, err := ExpandHome(path)
-	if err != nil {
-		return "", err
-	}
-
-	if expanded == "" {
-		return "", fmt.Errorf("path is required")
-	}
-
-	if !filepath.IsAbs(expanded) {
-		return "", fmt.Errorf("path must be absolute")
-	}
-
-	return filepath.Clean(expanded), nil
-}
-
 func HumanizePath(path string) string {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
