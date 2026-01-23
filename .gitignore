@@ -1,0 +1,15 @@
+.DS_Store
+
+# Binaries and build artifacts
+/wakeclaude
+/bin/
+/dist/
+/vendor/
+
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
