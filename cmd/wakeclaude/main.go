@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -62,12 +63,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	if result.NewSession {
-		fmt.Fprintf(os.Stdout, "new\t%s\t%s\n", result.ProjectPath, result.Model)
-		return
+	encoder := json.NewEncoder(os.Stdout)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(result); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-
-	fmt.Fprintf(os.Stdout, "%s\t%s\t%s\n", result.SessionID, result.SessionPath, result.Model)
 }
 
 func printUsage() {
