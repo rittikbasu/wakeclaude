@@ -44,4 +44,5 @@ type LogEntry struct {
 	SessionID     string    `json:"sessionId,omitempty"`
 	NewSession    bool      `json:"newSession"`
 	OutputPath    string    `json:"outputPath,omitempty"`
+	ProjectPath   string    `json:"projectPath,omitempty"`
 }

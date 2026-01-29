@@ -8,9 +8,14 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
-const scheduleVersion = 1
+const (
+	scheduleVersion = 1
+	MaxRunLogs      = 50
+	MaxDaemonLogs   = 50
+)
 
 type scheduleFile struct {
 	Version   int             `json:"version"`
@@ -197,6 +202,179 @@ func (s *Store) AppendLogWithOwnership(entry LogEntry, uid, gid int) error {
 func (s *Store) LogFilePath(entry LogEntry) string {
 	name := fmt.Sprintf("run-%s-%s.log", entry.ScheduleID, entry.RanAt.Format("20060102-150405"))
 	return filepath.Join(s.LogsDir, name)
+}
+
+func (s *Store) PruneLogs(runMax, daemonMax int, uid, gid int) error {
+	if runMax <= 0 && daemonMax <= 0 {
+		return nil
+	}
+	if err := s.Ensure(); err != nil {
+		return err
+	}
+
+	entries, err := s.LoadLogs(0)
+	if err != nil {
+		return err
+	}
+	if runMax > 0 && len(entries) > runMax {
+		entries = entries[:runMax]
+	}
+
+	keepPaths := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		path := entry.OutputPath
+		if path == "" {
+			path = s.LogFilePath(entry)
+		}
+		if path == "" {
+			continue
+		}
+		keepPaths[filepath.Clean(path)] = struct{}{}
+	}
+
+	if err := s.writeLogIndex(entries, uid, gid); err != nil {
+		return err
+	}
+
+	if err := s.pruneRunLogs(runMax, keepPaths); err != nil {
+		return err
+	}
+
+	if err := s.pruneDaemonLogs(daemonMax); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (s *Store) writeLogIndex(entries []LogEntry, uid, gid int) error {
+	if len(entries) == 0 {
+		if _, err := os.Stat(s.Logs); err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+	}
+
+	for i, j := 0, len(entries)-1; i < j; i, j = i+1, j-1 {
+		entries[i], entries[j] = entries[j], entries[i]
+	}
+
+	tmp := s.Logs + ".tmp"
+	file, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("write log: %w", err)
+	}
+	enc := json.NewEncoder(file)
+	for _, entry := range entries {
+		if err := enc.Encode(entry); err != nil {
+			_ = file.Close()
+			_ = os.Remove(tmp)
+			return fmt.Errorf("encode log: %w", err)
+		}
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write log: %w", err)
+	}
+	if err := os.Rename(tmp, s.Logs); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("write log: %w", err)
+	}
+	if uid >= 0 && gid >= 0 {
+		_ = os.Chown(s.Logs, uid, gid)
+	}
+	return nil
+}
+
+type logFile struct {
+	path    string
+	modTime time.Time
+}
+
+func (s *Store) pruneRunLogs(max int, keep map[string]struct{}) error {
+	if max <= 0 {
+		return nil
+	}
+	files, err := s.listLogFiles("run-", ".log")
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return nil
+	}
+
+	if len(keep) > 0 {
+		for _, file := range files {
+			if _, ok := keep[filepath.Clean(file.path)]; ok {
+				continue
+			}
+			_ = os.Remove(file.path)
+		}
+		return nil
+	}
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].modTime.After(files[j].modTime)
+	})
+	if len(files) <= max {
+		return nil
+	}
+	for _, file := range files[max:] {
+		_ = os.Remove(file.path)
+	}
+	return nil
+}
+
+func (s *Store) pruneDaemonLogs(max int) error {
+	if max <= 0 {
+		return nil
+	}
+	files, err := s.listLogFiles("daemon-", ".log")
+	if err != nil {
+		return err
+	}
+	if len(files) <= max {
+		return nil
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].modTime.After(files[j].modTime)
+	})
+	for _, file := range files[max:] {
+		_ = os.Remove(file.path)
+	}
+	return nil
+}
+
+func (s *Store) listLogFiles(prefix, suffix string) ([]logFile, error) {
+	entries, err := os.ReadDir(s.LogsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	files := make([]logFile, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, suffix) {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		files = append(files, logFile{
+			path:    filepath.Join(s.LogsDir, name),
+			modTime: info.ModTime(),
+		})
+	}
+	return files, nil
 }
 
 func Preview(text string, max int) string {

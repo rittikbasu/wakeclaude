@@ -76,7 +76,7 @@ func main() {
 		return schedules[i].NextRun.Before(schedules[j].NextRun)
 	})
 
-	logs, err := store.LoadLogs(200)
+	logs, err := store.LoadLogs(scheduler.MaxRunLogs)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

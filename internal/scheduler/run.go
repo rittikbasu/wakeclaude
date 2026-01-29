@@ -30,6 +30,9 @@ func RunSchedule(store *Store, id string) error {
 	if entry == nil {
 		return fmt.Errorf("schedule not found: %s", id)
 	}
+	defer func() {
+		_ = store.PruneLogs(MaxRunLogs, MaxDaemonLogs, entry.UID, entry.GID)
+	}()
 
 	logEntry := LogEntry{
 		ID:            NewID(),
@@ -40,6 +43,7 @@ func RunSchedule(store *Store, id string) error {
 		Model:         entry.Model,
 		SessionID:     entry.SessionID,
 		NewSession:    entry.NewSession,
+		ProjectPath:   entry.ProjectPath,
 	}
 
 	if err := store.Ensure(); err != nil {
@@ -82,7 +86,7 @@ func RunSchedule(store *Store, id string) error {
 		logEntry.Status = "success"
 	}
 
-	if logEntry.SessionID == "" && entry.NewSession {
+	if logEntry.SessionID == "" && entry.NewSession && logEntry.Status == "success" {
 		if sessionID := findNewSessionID(*entry, logEntry.RanAt); sessionID != "" {
 			logEntry.SessionID = sessionID
 		}
@@ -201,7 +205,13 @@ func findNewSessionID(entry ScheduleEntry, since time.Time) string {
 	}
 	cutoff := since.Add(-30 * time.Second)
 	for _, session := range sessions {
+		if session.ModTime.Before(cutoff) {
+			break
+		}
 		if session.ModTime.After(cutoff) {
+			if !matchesPrompt(entry.Prompt, session.Path) {
+				continue
+			}
 			if os.Geteuid() == 0 && entry.UID > 0 {
 				_ = os.Chown(session.Path, entry.UID, entry.GID)
 			}
@@ -209,6 +219,42 @@ func findNewSessionID(entry ScheduleEntry, since time.Time) string {
 		}
 	}
 	return ""
+}
+
+func matchesPrompt(prompt, sessionPath string) bool {
+	if strings.TrimSpace(prompt) == "" {
+		return false
+	}
+	text, err := app.ExtractFirstUserText(sessionPath)
+	if err != nil {
+		return false
+	}
+	return promptMatchesText(prompt, text)
+}
+
+func promptMatchesText(prompt, text string) bool {
+	p := normalizePromptText(prompt)
+	t := normalizePromptText(text)
+	if p == "" || t == "" {
+		return false
+	}
+	if strings.HasPrefix(p, t) || strings.HasPrefix(t, p) {
+		return true
+	}
+	return false
+}
+
+func normalizePromptText(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	runes := []rune(text)
+	if len(runes) > 200 {
+		return string(runes[:200])
+	}
+	return text
 }
 
 func findClaudeProjectDir(entry ScheduleEntry) string {

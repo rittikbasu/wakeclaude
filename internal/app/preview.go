@@ -86,6 +86,47 @@ func ExtractPreview(path string) (string, error) {
 	return "", nil
 }
 
+func ExtractFirstUserText(path string) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, 0, 64*1024), scannerMaxSize)
+
+	lines := 0
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		rec, ok := parseRecord(line)
+		if !ok {
+			continue
+		}
+
+		if isUserRecord(rec) {
+			if content := extractContentText(rec.MessageContent); content != "" {
+				return normalizeWhitespace(content), nil
+			}
+		}
+
+		lines++
+		if lines >= maxPreviewLines {
+			break
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+
+	return "", nil
+}
+
 type record struct {
 	Type           string          `json:"type"`
 	Summary        string          `json:"summary"`
@@ -180,8 +221,12 @@ func normalizePreview(text string) string {
 		return ""
 	}
 
-	text = strings.Join(strings.Fields(text), " ")
+	text = normalizeWhitespace(text)
 	return truncate(text, previewMaxChars)
+}
+
+func normalizeWhitespace(text string) string {
+	return strings.Join(strings.Fields(text), " ")
 }
 
 func truncate(text string, max int) string {

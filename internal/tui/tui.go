@@ -466,13 +466,22 @@ func (m model) renderLogCommands(b *strings.Builder, width int) {
 	}
 	entry := m.logs[item.index]
 	if entry.Status != "success" && entry.OutputPath != "" {
-		b.WriteString(renderLine(fmt.Sprintf("Output: cat %s", entry.OutputPath), width))
+		b.WriteString(renderWrappedPath("Output: cat ", entry.OutputPath, width))
 		b.WriteString("\n")
 	}
 	if entry.SessionID != "" {
-		b.WriteString(renderLine(fmt.Sprintf("Resume: claude --resume %s", entry.SessionID), width))
+		line := fmt.Sprintf("Resume: claude --resume %s", entry.SessionID)
+		b.WriteString(renderWrappedLines(line, width, len("Resume: ")))
 		b.WriteString("\n")
 	}
+	project := m.logProjectPath(entry)
+	if project == "" {
+		project = "(unknown)"
+	} else {
+		project = app.HumanizePath(project)
+	}
+	b.WriteString(renderWrappedPath("Project: ", project, width))
+	b.WriteString("\n")
 }
 
 func (m model) renderPermissionHelp(b *strings.Builder, width int) {
@@ -774,11 +783,15 @@ func (m *model) setLogItems() {
 		}
 		runMsg := formatRunMessage(entry)
 		when := scheduler.RelativeLabel(entry.RanAt, now)
+		project := entry.ProjectPath
+		if project == "" {
+			project = m.logProjectPath(entry)
+		}
 		title := preview
 		if runMsg != "" {
 			title = fmt.Sprintf("%s · %s", runMsg, preview)
 		}
-		filter := strings.ToLower(strings.Join([]string{preview, entry.Status, entry.Model, entry.ScheduleID, entry.SessionID}, " "))
+		filter := strings.ToLower(strings.Join([]string{preview, entry.Status, entry.Model, entry.ScheduleID, entry.SessionID, project}, " "))
 		items = append(items, listItem{
 			meta:   when,
 			title:  title,
@@ -1619,6 +1632,198 @@ func renderLine(text string, width int) string {
 	return truncateToWidth(text, width) + clearLine
 }
 
+func renderWrappedLines(text string, width int, indent int) string {
+	lines := wrapWithIndent(text, width, indent)
+	if len(lines) == 0 {
+		return renderLine("", width)
+	}
+	var b strings.Builder
+	for i, line := range lines {
+		prefix := ""
+		if i > 0 && indent > 0 {
+			prefix = strings.Repeat(" ", indent)
+		}
+		b.WriteString(renderLine(prefix+line, width))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func renderWrappedPath(prefix, path string, width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	if path == "" {
+		return renderLine(prefix, width)
+	}
+	indent := len([]rune(prefix))
+	if indent >= width {
+		return renderLine(prefix+path, width)
+	}
+
+	tokens := splitPathTokens(path)
+	if len(tokens) == 0 {
+		return renderLine(prefix+path, width)
+	}
+
+	lines := make([]string, 0, 3)
+	current := prefix
+	curLen := len([]rune(current))
+
+	for _, tok := range tokens {
+		tokRunes := []rune(tok)
+		tokLen := len(tokRunes)
+		if curLen+tokLen <= width {
+			current += tok
+			curLen += tokLen
+			continue
+		}
+		if strings.TrimSpace(current) != "" {
+			lines = append(lines, current)
+			current = strings.Repeat(" ", indent)
+			curLen = indent
+		}
+		for tokLen > 0 {
+			remaining := width - curLen
+			if remaining <= 0 {
+				lines = append(lines, current)
+				current = strings.Repeat(" ", indent)
+				curLen = indent
+				remaining = width - curLen
+				if remaining <= 0 {
+					remaining = width
+				}
+			}
+			if tokLen <= remaining {
+				current += string(tokRunes)
+				curLen += tokLen
+				tokLen = 0
+				break
+			}
+			current += string(tokRunes[:remaining])
+			curLen += remaining
+			tokRunes = tokRunes[remaining:]
+			tokLen = len(tokRunes)
+			lines = append(lines, current)
+			current = strings.Repeat(" ", indent)
+			curLen = indent
+		}
+	}
+	if strings.TrimSpace(current) != "" {
+		lines = append(lines, current)
+	}
+
+	var b strings.Builder
+	for i, line := range lines {
+		b.WriteString(renderLine(line, width))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func splitPathTokens(path string) []string {
+	if path == "" {
+		return nil
+	}
+	if path == "/" {
+		return []string{"/"}
+	}
+	abs := strings.HasPrefix(path, "/")
+	parts := strings.Split(path, "/")
+	tokens := make([]string, 0, len(parts))
+	first := true
+	for _, part := range parts {
+		if part == "" {
+			continue
+		}
+		if first && !abs {
+			tokens = append(tokens, part)
+		} else {
+			tokens = append(tokens, "/"+part)
+		}
+		first = false
+	}
+	return tokens
+}
+
+func wrapWithIndent(text string, width int, indent int) []string {
+	if width <= 0 {
+		width = 80
+	}
+	if indent < 0 {
+		indent = 0
+	}
+	if indent >= width {
+		indent = 0
+	}
+
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	firstLimit := width
+	nextLimit := width - indent
+	if nextLimit < 10 {
+		nextLimit = width
+	}
+
+	limit := firstLimit
+	usingFirst := true
+	lines := make([]string, 0, 4)
+	line := ""
+	lineLen := 0
+
+	flush := func() {
+		if lineLen > 0 {
+			lines = append(lines, line)
+			line = ""
+			lineLen = 0
+			usingFirst = false
+			limit = nextLimit
+		}
+	}
+
+	for _, word := range words {
+		wordRunes := []rune(word)
+		for len(wordRunes) > limit {
+			if lineLen > 0 {
+				flush()
+			}
+			lines = append(lines, string(wordRunes[:limit]))
+			wordRunes = wordRunes[limit:]
+			usingFirst = false
+			limit = nextLimit
+		}
+		w := string(wordRunes)
+		wLen := len([]rune(w))
+		if lineLen == 0 {
+			line = w
+			lineLen = wLen
+			continue
+		}
+		if lineLen+1+wLen <= limit {
+			line = line + " " + w
+			lineLen += 1 + wLen
+			continue
+		}
+		flush()
+		if usingFirst {
+			limit = firstLimit
+		}
+		line = w
+		lineLen = wLen
+	}
+	if lineLen > 0 {
+		lines = append(lines, line)
+	}
+	return lines
+}
+
 func sessionCountLabel(count int) string {
 	if count == 1 {
 		return "1 session"
@@ -1959,6 +2164,18 @@ func (m *model) findProject(path string) app.Project {
 		}
 	}
 	return app.Project{}
+}
+
+func (m *model) logProjectPath(entry scheduler.LogEntry) string {
+	if entry.ProjectPath != "" {
+		return entry.ProjectPath
+	}
+	for _, schedule := range m.schedules {
+		if schedule.ID == entry.ScheduleID {
+			return schedule.ProjectPath
+		}
+	}
+	return ""
 }
 
 func (m *model) findModel(value string) app.ModelOption {
