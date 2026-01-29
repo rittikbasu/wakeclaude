@@ -95,6 +95,7 @@ func RunSchedule(store *Store, id string) error {
 	logEntry.ExitCode = exitCode
 	logEntry.OutputPath = outputPath
 	_ = store.AppendLogWithOwnership(logEntry, entry.UID, entry.GID)
+	NotifyRun(*entry, logEntry)
 
 	if entry.Schedule.Type == "once" {
 		RemoveLaunchdIfRoot(*entry)
