@@ -123,7 +123,7 @@ func RunSchedule(store *Store, id string) error {
 func buildClaudeCommand(entry ScheduleEntry) (*exec.Cmd, error) {
 	path, err := findInPath(entry.PathEnv, "claude")
 	if err != nil {
-		return nil, fmt.Errorf("claude not found in PATH")
+		return nil, fmt.Errorf("claude not found in PATH; install: %s", app.ClaudeInstallCmd)
 	}
 
 	workDir := resolveWorkDir(entry)

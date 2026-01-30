@@ -82,6 +82,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	claudeReady := app.ClaudeAvailable()
+
 	models := []app.ModelOption{
 		{Label: "Default (auto)", Value: "auto"},
 		{Label: "Opus", Value: "opus"},
@@ -95,6 +97,8 @@ func main() {
 		Schedules:   schedules,
 		Logs:        logs,
 		Models:      models,
+		ClaudeReady: claudeReady,
+		InstallCmd:  app.ClaudeInstallCmd,
 	})
 	if err != nil {
 		if errors.Is(err, tui.ErrUserQuit) {

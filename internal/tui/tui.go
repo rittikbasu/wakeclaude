@@ -20,6 +20,8 @@ type Input struct {
 	Schedules   []scheduler.ScheduleEntry
 	Logs        []scheduler.LogEntry
 	Models      []app.ModelOption
+	ClaudeReady bool
+	InstallCmd  string
 }
 
 type ActionKind int
@@ -141,6 +143,8 @@ type model struct {
 	selectedModel app.ModelOption
 	selectedPerm  string
 	models        []app.ModelOption
+	claudeReady   bool
+	installCmd    string
 
 	promptText string
 	schedule   Schedule
@@ -201,6 +205,8 @@ func newModel(input Input) model {
 		logs:         input.Logs,
 		models:       models,
 		selectedPerm: "acceptEdits",
+		claudeReady:  input.ClaudeReady,
+		installCmd:   input.InstallCmd,
 		searchInput:  search,
 		promptInput:  prompt,
 		dateInput:    dateInput,
@@ -430,6 +436,16 @@ func (m model) renderList(b *strings.Builder, width int) {
 		}
 	}
 
+	if m.stage == stageMain && !m.claudeReady {
+		b.WriteString("\n")
+		b.WriteString(renderLineColored("claude not found in PATH.", width, colorRed))
+		b.WriteString("\n")
+		if strings.TrimSpace(m.installCmd) != "" {
+			b.WriteString(renderLine(fmt.Sprintf("install: %s", m.installCmd), width))
+			b.WriteString("\n")
+		}
+	}
+
 	b.WriteString("\n")
 	if m.stage == stageLogs {
 		m.renderLogCommands(b, width)
@@ -571,6 +587,9 @@ func (m *model) setMainItems() {
 	options := mainOptions
 	items := make([]listItem, 0, len(options))
 	for i, option := range options {
+		if option.Meta == "new" && !m.claudeReady {
+			continue
+		}
 		items = append(items, listItem{
 			title:  option.Label,
 			meta:   option.Meta,
@@ -1632,6 +1651,10 @@ func renderLine(text string, width int) string {
 	return truncateToWidth(text, width) + clearLine
 }
 
+func renderLineColored(text string, width int, color string) string {
+	return color + truncateToWidth(text, width) + colorReset + clearLine
+}
+
 func renderWrappedLines(text string, width int, indent int) string {
 	lines := wrapWithIndent(text, width, indent)
 	if len(lines) == 0 {
@@ -2202,6 +2225,8 @@ var asciiArtLines = []string{
 const (
 	clearLine   = "\x1b[0K"
 	searchLabel = "Search: "
+	colorReset  = "\x1b[0m"
+	colorRed    = "\x1b[31m"
 )
 
 func clamp(value, minVal, maxVal int) int {
