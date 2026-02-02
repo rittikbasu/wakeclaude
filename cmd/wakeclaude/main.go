@@ -17,6 +17,12 @@ import (
 	"wakeclaude/internal/tui"
 )
 
+var (
+	version   = "dev"
+	commit    = "none"
+	buildDate = "unknown"
+)
+
 func main() {
 	fs := flag.NewFlagSet("wakeclaude", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
@@ -28,12 +34,19 @@ func main() {
 	fs.StringVar(&runID, "run", "", "Run a scheduled job by id (internal)")
 	fs.BoolVar(&showHelp, "help", false, "Show help")
 	fs.BoolVar(&showHelp, "h", false, "Show help")
+	var showVersion bool
+	fs.BoolVar(&showVersion, "version", false, "Show version")
+	fs.BoolVar(&showVersion, "v", false, "Show version")
 
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		os.Exit(2)
 	}
 	if showHelp {
 		printUsage()
+		return
+	}
+	if showVersion {
+		printVersion()
 		return
 	}
 	if fs.NArg() > 0 {
@@ -211,6 +224,10 @@ func main() {
 	}
 }
 
+func printVersion() {
+	fmt.Printf("wakeclaude %s (commit %s, built %s)\n", version, commit, buildDate)
+}
+
 func buildEntry(draft *tui.Draft, existing *scheduler.ScheduleEntry) (scheduler.ScheduleEntry, error) {
 	if draft == nil {
 		return scheduler.ScheduleEntry{}, fmt.Errorf("missing schedule details")
@@ -360,4 +377,5 @@ func printUsage() {
 	fmt.Fprintln(os.Stderr, "  --projects-root   Root directory for Claude projects (default: ~/.claude/projects)")
 	fmt.Fprintln(os.Stderr, "  --run             Internal: run a scheduled task by id")
 	fmt.Fprintln(os.Stderr, "  --help, -h        Show help")
+	fmt.Fprintln(os.Stderr, "  --version, -v     Show version")
 }

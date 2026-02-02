@@ -6,6 +6,8 @@ builds:
   - id: wakeclaude
     main: ./cmd/wakeclaude
     binary: wakeclaude
+    ldflags:
+      - -s -w -X main.version={{ .Version }} -X main.commit={{ .Commit }} -X main.buildDate={{ .Date }}
     goos:
       - darwin
     goarch:
