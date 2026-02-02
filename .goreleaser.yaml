@@ -1,0 +1,37 @@
+version: 2
+
+project_name: wakeclaude
+
+builds:
+  - id: wakeclaude
+    main: ./cmd/wakeclaude
+    binary: wakeclaude
+    goos:
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    env:
+      - CGO_ENABLED=0
+
+archives:
+  - format: tar.gz
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  skip: true
+
+brews:
+  - name: wakeclaude
+    folder: Formula
+    repository:
+      owner: rittikbasu
+      name: homebrew-wakeclaude
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: https://github.com/rittikbasu/wakeclaude
+    description: "Schedule Claude Code prompts on macOS."
+    install: |
+      bin.install "wakeclaude"
