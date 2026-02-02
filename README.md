@@ -21,14 +21,14 @@ now i can schedule a prompt to continue at the reset time, and i can also schedu
 ## install (homebrew)
 
 ```bash
-brew install rittikbasu/wakeclaude/wakeclaude
+brew install --cask rittikbasu/wakeclaude/wakeclaude
 ```
 
 to update later:
 
 ```bash
 brew update
-brew upgrade wakeclaude
+brew upgrade --cask wakeclaude
 ```
 
 ## quickstart

@@ -15,7 +15,8 @@ builds:
       - CGO_ENABLED=0
 
 archives:
-  - format: tar.gz
+  - formats:
+      - tar.gz
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
@@ -24,14 +25,17 @@ checksum:
 changelog:
   disable: true
 
-brews:
+homebrew_casks:
   - name: wakeclaude
-    directory: Formula
     repository:
       owner: rittikbasu
       name: homebrew-wakeclaude
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/rittikbasu/wakeclaude
     description: "Schedule Claude Code prompts on macOS."
-    install: |
-      bin.install "wakeclaude"
+    hooks:
+      post:
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/wakeclaude"]
+          end
