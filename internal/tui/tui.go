@@ -1265,6 +1265,7 @@ func (m *model) beginDelete() tea.Cmd {
 	entry := m.schedules[item.index]
 	m.pendingDel = &entry
 	m.stage = stageConfirmDelete
+	m.resetCursor()
 	m.searchInput.SetValue("")
 	m.searchInput.Blur()
 	m.setConfirmDeleteItems()
@@ -1464,6 +1465,7 @@ func (m *model) updateScheduleInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *model) startMainStage() {
 	m.stage = stageMain
 	m.inputError = ""
+	m.resetCursor()
 	m.searchInput.Blur()
 	m.promptInput.Blur()
 	m.tokenInput.Blur()
@@ -1477,6 +1479,7 @@ func (m *model) startProjectStage() {
 	m.inputError = ""
 	m.editID = ""
 	m.pendingDel = nil
+	m.resetCursor()
 	m.searchInput.Focus()
 	m.promptInput.Blur()
 	m.dateInput.Blur()
@@ -1497,6 +1500,7 @@ func (m *model) startPromptStage() {
 func (m *model) startModelStage() {
 	m.stage = stageModels
 	m.inputError = ""
+	m.resetCursor()
 	m.promptInput.Blur()
 	m.searchInput.Focus()
 	m.setModelItems()
@@ -1505,6 +1509,7 @@ func (m *model) startModelStage() {
 func (m *model) startPermissionModeStage() {
 	m.stage = stagePermissionMode
 	m.inputError = ""
+	m.resetCursor()
 	m.promptInput.Blur()
 	m.searchInput.Focus()
 	m.setPermissionModeItems()
@@ -1513,6 +1518,7 @@ func (m *model) startPermissionModeStage() {
 func (m *model) startScheduleTypeStage() {
 	m.stage = stageScheduleType
 	m.inputError = ""
+	m.resetCursor()
 	m.promptInput.Blur()
 	m.dateInput.Blur()
 	m.timeInput.Blur()
@@ -1537,6 +1543,7 @@ func (m *model) startScheduleDateStage() {
 func (m *model) startScheduleWeekdayStage() {
 	m.stage = stageScheduleWeekday
 	m.inputError = ""
+	m.resetCursor()
 	m.searchInput.Focus()
 	m.promptInput.Blur()
 	m.dateInput.Blur()
@@ -1564,6 +1571,7 @@ func (m *model) startScheduleTimeStage() {
 func (m *model) startScheduleListStage() {
 	m.stage = stageScheduleList
 	m.inputError = ""
+	m.resetCursor()
 	m.searchInput.Focus()
 	m.setScheduleItems()
 }
@@ -1574,6 +1582,7 @@ func (m *model) startLogsStage() {
 	m.logDetailIndex = -1
 	m.logDetailOutput = ""
 	m.logDetailOutputErr = ""
+	m.resetCursor()
 	m.searchInput.Focus()
 	m.setLogItems()
 }
@@ -1690,6 +1699,11 @@ func (m *model) applyFilter() {
 	m.ensureCursorVisible()
 }
 
+func (m *model) resetCursor() {
+	m.cursor = 0
+	m.offset = 0
+}
+
 func (m *model) selectCurrent() tea.Cmd {
 	if len(m.items) == 0 {
 		return nil
@@ -1729,6 +1743,7 @@ func (m *model) selectCurrent() tea.Cmd {
 		m.stage = stageSessions
 		m.project = project
 		m.sessions = sessions
+		m.resetCursor()
 		m.setSessionItems()
 		return nil
 	case itemNewSession:
