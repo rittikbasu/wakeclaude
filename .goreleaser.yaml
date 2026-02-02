@@ -22,11 +22,11 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
-  skip: true
+  disable: true
 
 brews:
   - name: wakeclaude
-    folder: Formula
+    directory: Formula
     repository:
       owner: rittikbasu
       name: homebrew-wakeclaude
