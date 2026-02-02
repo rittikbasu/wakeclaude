@@ -24,6 +24,9 @@ type Input struct {
 	Models      []app.ModelOption
 	ClaudeReady bool
 	InstallCmd  string
+	TokenReady  bool
+	TokenErr    string
+	SetupCmd    string
 }
 
 type ActionKind int
@@ -74,6 +77,7 @@ const (
 	stageScheduleDate
 	stageScheduleWeekday
 	stageScheduleTime
+	stageSetupToken
 	stageScheduleList
 	stageLogs
 	stageLogDetail
@@ -148,6 +152,9 @@ type model struct {
 	models        []app.ModelOption
 	claudeReady   bool
 	installCmd    string
+	tokenReady    bool
+	tokenErr      string
+	setupCmd      string
 
 	promptText         string
 	schedule           Schedule
@@ -157,9 +164,12 @@ type model struct {
 	logDetailIndex     int
 	logDetailOutput    string
 	logDetailOutputErr string
+	tokenVerifying     bool
+	tokenSpinnerIndex  int
 
 	searchInput textinput.Model
 	promptInput textarea.Model
+	tokenInput  textinput.Model
 	dateInput   textinput.Model
 	timeInput   textinput.Model
 
@@ -203,6 +213,12 @@ func newModel(input Input) model {
 	timeInput.CharLimit = 5
 	timeInput.Blur()
 
+	tokenInput := textinput.New()
+	tokenInput.Prompt = ""
+	tokenInput.Placeholder = "paste your setup token..."
+	tokenInput.CharLimit = 0
+	tokenInput.Blur()
+
 	m := model{
 		stage:              stageMain,
 		projects:           input.Projects,
@@ -213,16 +229,26 @@ func newModel(input Input) model {
 		selectedPerm:       "acceptEdits",
 		claudeReady:        input.ClaudeReady,
 		installCmd:         input.InstallCmd,
+		tokenReady:         input.TokenReady,
+		tokenErr:           input.TokenErr,
+		setupCmd:           input.SetupCmd,
 		logDetailIndex:     -1,
 		logDetailOutput:    "",
 		logDetailOutputErr: "",
+		tokenVerifying:     false,
+		tokenSpinnerIndex:  0,
 		searchInput:        search,
 		promptInput:        prompt,
+		tokenInput:         tokenInput,
 		dateInput:          dateInput,
 		timeInput:          timeInput,
 	}
 
-	m.setMainItems()
+	if !m.tokenReady {
+		m.startSetupTokenStage()
+	} else {
+		m.setMainItems()
+	}
 	m.applyInputSizing()
 	m.searchInput.Blur()
 	return m
@@ -254,6 +280,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updatePrompt(msg)
 	case stageScheduleDate, stageScheduleTime:
 		return m.updateScheduleInput(msg)
+	case stageSetupToken:
+		return m.updateSetupToken(msg)
 	case stageProjects, stageSessions, stageModels, stagePermissionMode, stageScheduleType, stageScheduleWeekday, stageMain, stageScheduleList, stageLogs, stageConfirmDelete:
 		return m.updateList(msg)
 	case stageLogDetail:
@@ -287,6 +315,9 @@ func (m model) View() string {
 		return b.String()
 	case stageScheduleTime:
 		m.renderScheduleTime(&b, lineWidth)
+		return b.String()
+	case stageSetupToken:
+		m.renderSetupToken(&b, lineWidth)
 		return b.String()
 	case stageLogDetail:
 		m.renderLogDetail(&b, lineWidth)
@@ -354,6 +385,38 @@ func (m model) renderScheduleTime(b *strings.Builder, width int) {
 		b.WriteString("\n")
 	}
 	b.WriteString("enter confirm | esc back | q quit\n")
+}
+
+func (m model) renderSetupToken(b *strings.Builder, width int) {
+	b.WriteString(renderLineColored("setup token required.", width, colorRed))
+	b.WriteString("\n")
+	b.WriteString("\n")
+	b.WriteString(renderLine("run this command in a separate terminal to generate one:", width))
+	b.WriteString("\n")
+	if strings.TrimSpace(m.setupCmd) != "" {
+		b.WriteString(renderLine(m.setupCmd, width))
+		b.WriteString("\n")
+		b.WriteString("\n")
+	}
+	if !m.claudeReady && strings.TrimSpace(m.installCmd) != "" {
+		b.WriteString(renderLine(fmt.Sprintf("install: %s", m.installCmd), width))
+		b.WriteString("\n")
+	}
+	b.WriteString(renderLine("paste the token below:", width))
+	b.WriteString("\n")
+	b.WriteString(m.tokenInput.View())
+	b.WriteString(clearLine)
+	b.WriteString("\n")
+	if m.tokenVerifying {
+		b.WriteString(renderLine(fmt.Sprintf("verifying %s", tokenSpinnerFrame(m.tokenSpinnerIndex)), width))
+		b.WriteString("\n")
+	}
+	if m.inputError != "" {
+		b.WriteString(renderLine(fmt.Sprintf("Error: %s", m.inputError), width))
+		b.WriteString("\n")
+	}
+	b.WriteString(m.footerHint())
+	b.WriteString("\n")
 }
 
 func (m model) renderLogDetail(b *strings.Builder, width int) {
@@ -576,6 +639,14 @@ func (m model) footerHint() string {
 		return "enter details | r refresh | esc back | q quit"
 	case stageLogDetail:
 		return "esc back | q quit"
+	case stageSetupToken:
+		if m.tokenVerifying {
+			return "q quit"
+		}
+		if m.tokenReady {
+			return "enter verify | ctrl+u clear | esc back | q quit"
+		}
+		return "enter verify | ctrl+u clear | esc quit"
 	case stageConfirmDelete:
 		return "enter confirm | esc back | q quit"
 	default:
@@ -1071,6 +1142,13 @@ func (m *model) handleBack() (tea.Model, tea.Cmd) {
 	case stageScheduleList, stageLogs:
 		m.startMainStage()
 		return m, nil
+	case stageSetupToken:
+		if !m.tokenReady {
+			m.err = ErrUserQuit
+			return m, tea.Quit
+		}
+		m.startMainStage()
+		return m, nil
 	case stageLogDetail:
 		m.stage = stageLogs
 		return m, nil
@@ -1191,6 +1269,7 @@ func (m *model) applyInputSizing() {
 		width = 80
 	}
 	m.searchInput.Width = max(10, width-len(searchLabel))
+	m.tokenInput.Width = max(10, width-2)
 	m.promptInput.SetWidth(width)
 	m.promptInput.SetHeight(promptHeight(m.height))
 	m.dateInput.Width = width
@@ -1219,6 +1298,95 @@ func (m *model) updatePrompt(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, cmd
+}
+
+func (m *model) updateSetupToken(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tokenVerifyMsg:
+		m.tokenVerifying = false
+		if msg.err != nil {
+			m.inputError = msg.err.Error()
+			return m, nil
+		}
+		m.tokenReady = true
+		m.inputError = ""
+		m.tokenInput.SetValue("")
+		m.startMainStage()
+		return m, nil
+	case tokenSpinnerMsg:
+		if m.tokenVerifying {
+			m.tokenSpinnerIndex++
+			return m, tokenSpinnerCmd()
+		}
+		return m, nil
+	}
+
+	switch key := msg.(type) {
+	case tea.KeyMsg:
+		if m.tokenVerifying {
+			return m, nil
+		}
+		switch key.String() {
+		case "enter":
+			value := strings.TrimSpace(m.tokenInput.Value())
+			if value == "" {
+				m.inputError = "token is required"
+				return m, nil
+			}
+			if !m.claudeReady {
+				m.inputError = "claude not found in PATH"
+				return m, nil
+			}
+			m.tokenVerifying = true
+			m.tokenSpinnerIndex = 0
+			m.inputError = ""
+			token := value
+			return m, tea.Batch(verifyTokenCmd(token), tokenSpinnerCmd())
+		case "ctrl+u":
+			m.tokenInput.SetValue("")
+			m.inputError = ""
+			return m, nil
+		case "esc":
+			if !m.tokenReady {
+				m.err = ErrUserQuit
+				return m, tea.Quit
+			}
+			m.startMainStage()
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	prev := m.tokenInput.Value()
+	m.tokenInput, cmd = m.tokenInput.Update(msg)
+	if m.tokenInput.Value() != prev {
+		m.inputError = ""
+	}
+	return m, cmd
+}
+
+type tokenVerifyMsg struct {
+	err error
+}
+
+type tokenSpinnerMsg struct{}
+
+func verifyTokenCmd(token string) tea.Cmd {
+	return func() tea.Msg {
+		if err := app.VerifyOAuthToken(token); err != nil {
+			return tokenVerifyMsg{err: err}
+		}
+		if err := app.SaveOAuthToken(token); err != nil {
+			return tokenVerifyMsg{err: err}
+		}
+		return tokenVerifyMsg{}
+	}
+}
+
+func tokenSpinnerCmd() tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg {
+		return tokenSpinnerMsg{}
+	})
 }
 
 func (m *model) updateScheduleInput(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -1262,6 +1430,12 @@ func (m *model) updateScheduleInput(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.schedule.Time = value
 			m.schedule.Timezone = time.Now().Location().String()
+			if m.schedule.Type == "once" {
+				if err := validateOnceSchedule(m.schedule.Date, m.schedule.Time, m.schedule.Timezone); err != nil {
+					m.inputError = err.Error()
+					return m, nil
+				}
+			}
 			m.finishResult()
 			return m, tea.Quit
 		}
@@ -1284,6 +1458,7 @@ func (m *model) startMainStage() {
 	m.inputError = ""
 	m.searchInput.Blur()
 	m.promptInput.Blur()
+	m.tokenInput.Blur()
 	m.dateInput.Blur()
 	m.timeInput.Blur()
 	m.setMainItems()
@@ -1395,6 +1570,21 @@ func (m *model) startLogsStage() {
 	m.setLogItems()
 }
 
+func (m *model) startSetupTokenStage() {
+	m.stage = stageSetupToken
+	m.inputError = ""
+	if m.tokenErr != "" {
+		m.inputError = m.tokenErr
+		m.tokenErr = ""
+	}
+	m.searchInput.Blur()
+	m.promptInput.Blur()
+	m.dateInput.Blur()
+	m.timeInput.Blur()
+	m.tokenInput.SetValue("")
+	m.tokenInput.Focus()
+}
+
 func (m *model) startEditFlow(entry scheduler.ScheduleEntry) {
 	m.editID = entry.ID
 	m.project = m.findProject(entry.ProjectPath)
@@ -1500,21 +1690,24 @@ func (m *model) selectCurrent() tea.Cmd {
 	item := m.items[m.cursor]
 	switch item.kind {
 	case itemMain:
-		switch item.index {
-		case 0:
+		switch item.meta {
+		case "new":
 			if m.projectsErr != nil || len(m.projects) == 0 {
 				m.inputError = "No Claude projects found. Run Claude once to create them."
 				return nil
 			}
 			m.startProjectStage()
 			return nil
-		case 1:
+		case "list":
 			m.startScheduleListStage()
 			return nil
-		case 2:
+		case "logs":
 			m.startLogsStage()
 			return nil
-		case 3:
+		case "token":
+			m.startSetupTokenStage()
+			return nil
+		case "exit":
 			m.err = ErrUserQuit
 			return tea.Quit
 		}
@@ -1684,6 +1877,8 @@ func (m model) headerLines() int {
 		lines += 1
 	case stageLogs:
 		lines += 2
+	case stageSetupToken:
+		lines += 6
 	case stageLogDetail:
 		lines += 6
 	case stageConfirmDelete:
@@ -1729,6 +1924,8 @@ func (m model) usesSearch() bool {
 	case stageMain, stageConfirmDelete:
 		return false
 	case stagePrompt, stageScheduleDate, stageScheduleTime:
+		return false
+	case stageSetupToken:
 		return false
 	default:
 		return false
@@ -2022,6 +2219,14 @@ func wrapWithIndent(text string, width int, indent int) []string {
 	return lines
 }
 
+func tokenSpinnerFrame(index int) string {
+	frames := []string{"/", "-", "\\", "|"}
+	if index < 0 {
+		index = 0
+	}
+	return frames[index%len(frames)]
+}
+
 func readOutputSnippet(path string, max int) (string, error) {
 	if max <= 0 {
 		max = 2000
@@ -2081,6 +2286,7 @@ var mainOptions = []mainOption{
 	{Label: "Schedule a prompt", Meta: "new"},
 	{Label: "Manage scheduled prompts", Meta: "list"},
 	{Label: "View run logs", Meta: "logs"},
+	{Label: "Setup token", Meta: "token"},
 	{Label: "Quit", Meta: "exit"},
 }
 
@@ -2233,6 +2439,28 @@ func isValidTime(value string) bool {
 	}
 	_, err := time.Parse("15:04", value)
 	return err == nil
+}
+
+func validateOnceSchedule(date, clock, tz string) error {
+	date = strings.TrimSpace(date)
+	clock = strings.TrimSpace(clock)
+	if date == "" || clock == "" {
+		return fmt.Errorf("date and time required")
+	}
+	loc := time.Local
+	if tz != "" {
+		if l, err := time.LoadLocation(tz); err == nil {
+			loc = l
+		}
+	}
+	parsed, err := time.ParseInLocation("2006-01-02 15:04", fmt.Sprintf("%s %s", date, clock), loc)
+	if err != nil {
+		return fmt.Errorf("invalid date/time")
+	}
+	if !parsed.After(time.Now().In(loc)) {
+		return fmt.Errorf("time is in the past")
+	}
+	return nil
 }
 
 func renderWidth(width int) int {

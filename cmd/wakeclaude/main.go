@@ -83,6 +83,15 @@ func main() {
 	}
 
 	claudeReady := app.ClaudeAvailable()
+	tokenReady := false
+	tokenErr := ""
+	if claudeReady {
+		if token, err := app.LoadOAuthToken(); err == nil && token != "" {
+			tokenReady = true
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			tokenErr = err.Error()
+		}
+	}
 
 	models := []app.ModelOption{
 		{Label: "Default (auto)", Value: "auto"},
@@ -99,6 +108,9 @@ func main() {
 		Models:      models,
 		ClaudeReady: claudeReady,
 		InstallCmd:  app.ClaudeInstallCmd,
+		TokenReady:  tokenReady,
+		TokenErr:    tokenErr,
+		SetupCmd:    app.ClaudeSetupTokenCmd,
 	})
 	if err != nil {
 		if errors.Is(err, tui.ErrUserQuit) {
