@@ -509,7 +509,15 @@ func (m model) renderLogDetail(b *strings.Builder, width int) {
 		}
 	}
 	if entry.SessionID != "" {
-		b.WriteString(renderWrappedLines(fmt.Sprintf("Resume: claude --resume %s", entry.SessionID), width, len("Resume: ")))
+		projectPath := m.logProjectPath(entry)
+		if expanded, err := app.ExpandHome(projectPath); err == nil && expanded != "" {
+			projectPath = expanded
+		}
+		resumeCmd := fmt.Sprintf("claude --resume %s", entry.SessionID)
+		if strings.TrimSpace(projectPath) != "" {
+			resumeCmd = fmt.Sprintf("cd %s && %s", shellQuote(projectPath), resumeCmd)
+		}
+		b.WriteString(renderWrappedLines(fmt.Sprintf("Resume: %s", resumeCmd), width, len("Resume: ")))
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
@@ -2018,6 +2026,16 @@ func renderWrappedLines(text string, width int, indent int) string {
 		}
 	}
 	return b.String()
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	if !strings.ContainsAny(value, " \t\n'\"\\$`") {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func renderWrappedPath(prefix, path string, width int) string {
