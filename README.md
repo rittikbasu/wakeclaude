@@ -1,62 +1,120 @@
 # wakeclaude
 
-wakeclaude is a small TUI for finding and resuming local Claude Code sessions.
+a tiny macos tui to schedule claude code prompts so your sessions can keep running even when you hit limits or go to sleep.
 
-## Usage
+## why i built it
 
-Run it with no arguments:
+i hit the 5 hour session rate limit on my claude plan a lot. work would stop mid‑flow, so i wanted a way to auto‑resume right when the limit resets.
 
-```sh
-wakeclaude
+now i can schedule a prompt to continue at the reset time, and i can also schedule prompts while i’m sleeping so the work keeps going. one thing i do weekly is run a security review on my codebases just before the weekly rate limit resets (while i’m asleep).
+
+## what it does
+
+- pick a project, pick a session (or start a new one)
+- write the prompt
+- choose a model + permission mode
+- schedule it (one‑time, daily, weekly)
+- wakes your mac only when needed and runs the prompt
+- keeps logs + shows a simple run history
+- sends a native macos notification on success/error
+
+## install (homebrew)
+
+```bash
+brew install rittikbasu/wakeclaude/wakeclaude
 ```
 
-It opens an interactive picker:
+to update later:
 
-1. Pick a project (search box at the top).
-2. Pick a session, or choose **Start a new session**.
-3. Pick a Claude model to use.
-4. Enter the prompt to run.
-5. Pick when to run it (one-time, daily, weekly).
+```bash
+brew update
+brew upgrade wakeclaude
+```
 
-Controls:
+## quickstart
 
-- Arrow keys to move, `enter` to select, type to search
+1. build it:
+
+   ```bash
+   go build -o wakeclaude ./cmd/wakeclaude
+   ```
+
+2. run it:
+
+   ```bash
+   ./wakeclaude
+   ```
+
+## setup token (required)
+
+wakeclaude uses a long‑lived claude code token so scheduled prompts keep working even after you close the terminal.
+
+generate one in a separate terminal:
+
+```bash
+claude setup-token
+```
+
+paste it into wakeclaude when prompted. it stores the token in your **macos keychain** (not in files).
+
+## how it works (macos)
+
+- uses **launchd** (launchdaemons) to run on schedule
+- uses **pmset schedule wakeorpoweron** to wake the mac only when needed
+- you’ll be prompted for sudo when creating/editing/deleting schedules
+- the job runs as root, then uses `launchctl asuser` to run `claude` in your user session
+
+important: if you are fully logged out, `claude` may not be able to access your keychain session. running while asleep with the user still logged in works best.
+
+## usage (tui)
+
+you’ll see a simple menu:
+
+- **schedule a prompt** (project → session → prompt → model → permission → time)
+- **manage scheduled prompts** (edit/delete)
+- **view run logs**
+
+controls:
+
+- arrow keys to move, `enter` to select
+- type to search (projects, sessions, schedules, logs)
 - `esc` to go back, `q` to quit
-- Prompt entry: `ctrl+d` to continue
+- prompt entry: `ctrl+d` to continue
 
-Schedule input:
+## models + permission modes
 
-- One-time: enter date + time
-- Daily: enter time (24-hour)
-- Weekly: pick day + enter time (24-hour)
+models:
+- `opus`
+- `sonnet`
+- `haiku`
 
-Output:
+permission modes:
+- `acceptEdits` – auto‑accept file edits + filesystem access
+- `plan` – read‑only, no commands or file changes
+- `bypassPermissions` – skips permission checks (use with care)
 
-- JSON describing the selection, prompt, and schedule.
+## logs + notifications
 
-Example:
+data lives here:
 
-```json
-{"projectPath":"/Users/me/dev/app","sessionId":"...","sessionPath":"/Users/me/.claude/projects/.../id.jsonl","newSession":false,"model":"opus","prompt":"...","schedule":{"type":"weekly","weekday":"Tuesday","time":"09:00","timezone":"Local"}}
-```
+- `~/Library/Application Support/WakeClaude/schedules.json`
+- `~/Library/Application Support/WakeClaude/logs.jsonl`
+- `~/Library/Application Support/WakeClaude/logs/*.log`
 
-Models:
+run logs are retained (last 50) and shown in the tui. each run also triggers a native macos notification (via `osascript`).
 
-- `auto` (default)
-- `sonnet`, `opus`, `haiku`
+## flags
 
-Flags:
+- `--projects-root <path>`: override default `~/.claude/projects`
+- `--run <id>`: internal (used by launchd)
 
-- `--projects-root <path>`: override the default `~/.claude/projects`
+## assumptions
 
-## Assumptions
+- claude code sessions live under `~/.claude/projects`
+- root‑level `.jsonl` files are sessions
+- project display names are derived from the session `cwd` when available
+- `claude` must be in your PATH at scheduling time (wakeclaude records it)
 
-- Claude Code sessions live under `~/.claude/projects`.
-- Root-level `.jsonl` files are sessions.
-- Project display names are derived from the session file `cwd` when available.
+## contributing
 
-## Build
-
-```sh
-go build -o wakeclaude ./cmd/wakeclaude
-```
+open a pr if you want — bug fixes, ux polish, or smarter scheduling ideas are welcome.
