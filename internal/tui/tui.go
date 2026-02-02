@@ -388,7 +388,11 @@ func (m model) renderScheduleTime(b *strings.Builder, width int) {
 }
 
 func (m model) renderSetupToken(b *strings.Builder, width int) {
-	b.WriteString(renderLineColored("setup token required.", width, colorRed))
+	if m.tokenReady {
+		b.WriteString(renderLine("update setup token.", width))
+	} else {
+		b.WriteString(renderLineColored("setup token required.", width, colorRed))
+	}
 	b.WriteString("\n")
 	b.WriteString("\n")
 	b.WriteString(renderLine("run this command in a separate terminal to generate one:", width))
@@ -408,11 +412,17 @@ func (m model) renderSetupToken(b *strings.Builder, width int) {
 	b.WriteString(clearLine)
 	b.WriteString("\n")
 	if m.tokenVerifying {
-		b.WriteString(renderLine(fmt.Sprintf("verifying %s", tokenSpinnerFrame(m.tokenSpinnerIndex)), width))
+		b.WriteString("\n")
+		b.WriteString(renderLine(fmt.Sprintf("%s verifying", tokenSpinnerFrame(m.tokenSpinnerIndex)), width))
 		b.WriteString("\n")
 	}
 	if m.inputError != "" {
+		b.WriteString("\n")
 		b.WriteString(renderLine(fmt.Sprintf("Error: %s", m.inputError), width))
+		b.WriteString("\n")
+		b.WriteString("\n")
+	}
+	if m.inputError == "" {
 		b.WriteString("\n")
 	}
 	b.WriteString(m.footerHint())

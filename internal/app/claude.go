@@ -129,11 +129,22 @@ func VerifyOAuthToken(token string) error {
 	if cmdErr != nil {
 		msg := strings.TrimSpace(string(output))
 		if msg != "" {
-			return fmt.Errorf(msg)
+			return fmt.Errorf(friendlyTokenError(msg))
 		}
 		return fmt.Errorf("token verification failed")
 	}
 	return nil
+}
+
+func friendlyTokenError(msg string) string {
+	lower := strings.ToLower(msg)
+	if strings.Contains(lower, "failed to authenticate") || strings.Contains(lower, "authentication") || strings.Contains(lower, "unauthorized") {
+		return "invalid token. run `claude setup-token` again"
+	}
+	if strings.Contains(lower, "api error: 401") || strings.Contains(lower, "401") {
+		return "invalid token. run `claude setup-token` again"
+	}
+	return msg
 }
 
 func cleanupVerifyProject(verifyDir string) {
