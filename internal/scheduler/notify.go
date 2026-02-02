@@ -32,29 +32,43 @@ func NotifyRun(entry ScheduleEntry, logEntry LogEntry) {
 func buildNotificationScript(logEntry LogEntry) string {
 	title := "WakeClaude"
 	subtitle := "Run complete"
-	status := "OK"
 	message := logEntry.PromptPreview
-	if strings.TrimSpace(message) == "" {
-		message = "Run finished."
-	}
 
 	if logEntry.Status != "success" {
 		subtitle = "Run failed"
-		status = "ERROR"
-		if logEntry.Error != "" {
+		if isMeaningfulError(logEntry.Error) {
 			message = logEntry.Error
 		}
 	}
 
+	if strings.TrimSpace(message) == "" {
+		if logEntry.Status == "success" {
+			message = "Run finished."
+		} else {
+			message = "Run failed."
+		}
+	}
+
 	message = truncateNotification(message, 140)
-	full := fmt.Sprintf("%s · %s", status, message)
 
 	return fmt.Sprintf(
 		`display notification "%s" with title "%s" subtitle "%s"`,
-		escapeAppleScript(full),
+		escapeAppleScript(message),
 		escapeAppleScript(title),
 		escapeAppleScript(subtitle),
 	)
+}
+
+func isMeaningfulError(err string) bool {
+	err = strings.TrimSpace(err)
+	if err == "" {
+		return false
+	}
+	lower := strings.ToLower(err)
+	if strings.HasPrefix(lower, "exit status") {
+		return false
+	}
+	return true
 }
 
 func truncateNotification(text string, max int) string {

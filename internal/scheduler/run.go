@@ -144,7 +144,7 @@ func buildClaudeCommand(entry ScheduleEntry) (*exec.Cmd, error) {
 	args = append(args, entry.Prompt)
 
 	if os.Geteuid() == 0 && entry.UID > 0 {
-		cmd := exec.Command("/bin/launchctl", append([]string{"asuser", strconv.Itoa(entry.UID), path}, args...)...)
+		cmd := exec.Command("/bin/launchctl", append([]string{"asuser", strconv.Itoa(entry.UID), "/usr/bin/sudo", "-u", entry.User, "-H", "--", path}, args...)...)
 		cmd.Dir = workDir
 		cmd.Env = append(os.Environ(), []string{
 			"HOME=" + entry.HomeDir,

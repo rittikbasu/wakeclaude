@@ -3,6 +3,8 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"strings"
 	"time"
 
@@ -74,6 +76,7 @@ const (
 	stageScheduleTime
 	stageScheduleList
 	stageLogs
+	stageLogDetail
 	stageConfirmDelete
 )
 
@@ -146,11 +149,14 @@ type model struct {
 	claudeReady   bool
 	installCmd    string
 
-	promptText string
-	schedule   Schedule
-	inputError string
-	editID     string
-	pendingDel *scheduler.ScheduleEntry
+	promptText         string
+	schedule           Schedule
+	inputError         string
+	editID             string
+	pendingDel         *scheduler.ScheduleEntry
+	logDetailIndex     int
+	logDetailOutput    string
+	logDetailOutputErr string
 
 	searchInput textinput.Model
 	promptInput textarea.Model
@@ -198,19 +204,22 @@ func newModel(input Input) model {
 	timeInput.Blur()
 
 	m := model{
-		stage:        stageMain,
-		projects:     input.Projects,
-		projectsErr:  input.ProjectsErr,
-		schedules:    input.Schedules,
-		logs:         input.Logs,
-		models:       models,
-		selectedPerm: "acceptEdits",
-		claudeReady:  input.ClaudeReady,
-		installCmd:   input.InstallCmd,
-		searchInput:  search,
-		promptInput:  prompt,
-		dateInput:    dateInput,
-		timeInput:    timeInput,
+		stage:              stageMain,
+		projects:           input.Projects,
+		projectsErr:        input.ProjectsErr,
+		schedules:          input.Schedules,
+		logs:               input.Logs,
+		models:             models,
+		selectedPerm:       "acceptEdits",
+		claudeReady:        input.ClaudeReady,
+		installCmd:         input.InstallCmd,
+		logDetailIndex:     -1,
+		logDetailOutput:    "",
+		logDetailOutputErr: "",
+		searchInput:        search,
+		promptInput:        prompt,
+		dateInput:          dateInput,
+		timeInput:          timeInput,
 	}
 
 	m.setMainItems()
@@ -247,6 +256,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateScheduleInput(msg)
 	case stageProjects, stageSessions, stageModels, stagePermissionMode, stageScheduleType, stageScheduleWeekday, stageMain, stageScheduleList, stageLogs, stageConfirmDelete:
 		return m.updateList(msg)
+	case stageLogDetail:
+		return m.updateLogDetail(msg)
 	default:
 		return m, nil
 	}
@@ -276,6 +287,9 @@ func (m model) View() string {
 		return b.String()
 	case stageScheduleTime:
 		m.renderScheduleTime(&b, lineWidth)
+		return b.String()
+	case stageLogDetail:
+		m.renderLogDetail(&b, lineWidth)
 		return b.String()
 	default:
 		m.renderList(&b, lineWidth)
@@ -342,6 +356,104 @@ func (m model) renderScheduleTime(b *strings.Builder, width int) {
 	b.WriteString("enter confirm | esc back | q quit\n")
 }
 
+func (m model) renderLogDetail(b *strings.Builder, width int) {
+	entry, ok := m.logDetailEntry()
+	if !ok {
+		b.WriteString(renderLine("Log not found.", width))
+		b.WriteString("\n")
+		b.WriteString(m.footerHint())
+		b.WriteString("\n")
+		return
+	}
+
+	b.WriteString(renderLine("Run details.", width))
+	b.WriteString("\n")
+
+	status := "OK"
+	if entry.Status != "success" {
+		status = "ERROR"
+	}
+	b.WriteString(renderLine(fmt.Sprintf("Status: %s", status), width))
+	b.WriteString("\n")
+	if entry.Error != "" {
+		b.WriteString(renderWrappedLines(fmt.Sprintf("Error: %s", entry.Error), width, len("Error: ")))
+		b.WriteString("\n")
+	}
+
+	now := time.Now()
+	ran := entry.RanAt.Local()
+	ranLabel := formatDetailTime(ran, now)
+	rel := scheduler.RelativeLabel(entry.RanAt, now)
+	if rel != "" {
+		ranLabel = fmt.Sprintf("%s (%s)", ranLabel, rel)
+	}
+	b.WriteString(renderLine(fmt.Sprintf("Ran: %s", ranLabel), width))
+	b.WriteString("\n")
+
+	schedule, hasSchedule := m.findSchedule(entry.ScheduleID)
+	if hasSchedule {
+		b.WriteString(renderLine(fmt.Sprintf("Schedule: %s", formatScheduleLabel(schedule)), width))
+		b.WriteString("\n")
+		if added := formatDetailTime(schedule.CreatedAt, now); added != "" {
+			b.WriteString(renderLine(fmt.Sprintf("Added: %s", added), width))
+			b.WriteString("\n")
+		}
+		if schedule.PermissionMode != "" {
+			b.WriteString(renderLine(fmt.Sprintf("Permission: %s", schedule.PermissionMode), width))
+			b.WriteString("\n")
+		}
+	}
+
+	model := entry.Model
+	if model == "" && hasSchedule {
+		model = schedule.Model
+	}
+	if model != "" {
+		b.WriteString(renderLine(fmt.Sprintf("Model: %s", model), width))
+		b.WriteString("\n")
+	}
+
+	project := entry.ProjectPath
+	if project == "" && hasSchedule {
+		project = schedule.ProjectPath
+	}
+	if project != "" {
+		b.WriteString(renderWrappedPath("Project: ", app.HumanizePath(project), width))
+		b.WriteString("\n")
+	}
+
+	prompt := entry.PromptPreview
+	if hasSchedule && schedule.Prompt != "" {
+		prompt = schedule.Prompt
+	}
+	if strings.TrimSpace(prompt) != "" {
+		b.WriteString(renderWrappedLines(fmt.Sprintf("Prompt: %s", prompt), width, len("Prompt: ")))
+		b.WriteString("\n")
+	}
+
+	if entry.Status != "success" && entry.OutputPath != "" {
+		b.WriteString(renderLine("Output:", width))
+		b.WriteString("\n")
+		if m.logDetailOutput != "" {
+			b.WriteString(renderWrappedIndentedLines(m.logDetailOutput, width, 2))
+			b.WriteString("\n")
+		} else if m.logDetailOutputErr != "" {
+			b.WriteString(renderLine(fmt.Sprintf("  (unavailable: %s)", m.logDetailOutputErr), width))
+			b.WriteString("\n")
+		} else {
+			b.WriteString(renderLine("  (empty)", width))
+			b.WriteString("\n")
+		}
+	}
+	if entry.SessionID != "" {
+		b.WriteString(renderWrappedLines(fmt.Sprintf("Resume: claude --resume %s", entry.SessionID), width, len("Resume: ")))
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
+	b.WriteString(m.footerHint())
+	b.WriteString("\n")
+}
+
 func (m model) renderList(b *strings.Builder, width int) {
 	switch m.stage {
 	case stageMain:
@@ -395,7 +507,7 @@ func (m model) renderList(b *strings.Builder, width int) {
 		b.WriteString(renderLine(fmt.Sprintf("Notice: %s", m.projectsErr.Error()), width))
 		b.WriteString("\n")
 	}
-	if m.inputError != "" && m.stage == stageMain {
+	if m.inputError != "" && (m.stage == stageMain || m.stage == stageLogs) {
 		b.WriteString(renderLine(fmt.Sprintf("Error: %s", m.inputError), width))
 		b.WriteString("\n")
 	}
@@ -447,9 +559,6 @@ func (m model) renderList(b *strings.Builder, width int) {
 	}
 
 	b.WriteString("\n")
-	if m.stage == stageLogs {
-		m.renderLogCommands(b, width)
-	}
 	if m.stage == stagePermissionMode {
 		m.renderPermissionHelp(b, width)
 	}
@@ -464,40 +573,14 @@ func (m model) footerHint() string {
 	case stageScheduleList:
 		return "enter edit | d delete | esc back | q quit"
 	case stageLogs:
+		return "enter details | r refresh | esc back | q quit"
+	case stageLogDetail:
 		return "esc back | q quit"
 	case stageConfirmDelete:
 		return "enter confirm | esc back | q quit"
 	default:
 		return "up/down move | enter select | esc back | q quit"
 	}
-}
-
-func (m model) renderLogCommands(b *strings.Builder, width int) {
-	if len(m.items) == 0 {
-		return
-	}
-	item := m.items[m.cursor]
-	if item.kind != itemLog || item.index < 0 || item.index >= len(m.logs) {
-		return
-	}
-	entry := m.logs[item.index]
-	if entry.Status != "success" && entry.OutputPath != "" {
-		b.WriteString(renderWrappedPath("Output: cat ", entry.OutputPath, width))
-		b.WriteString("\n")
-	}
-	if entry.SessionID != "" {
-		line := fmt.Sprintf("Resume: claude --resume %s", entry.SessionID)
-		b.WriteString(renderWrappedLines(line, width, len("Resume: ")))
-		b.WriteString("\n")
-	}
-	project := m.logProjectPath(entry)
-	if project == "" {
-		project = "(unknown)"
-	} else {
-		project = app.HumanizePath(project)
-	}
-	b.WriteString(renderWrappedPath("Project: ", project, width))
-	b.WriteString("\n")
 }
 
 func (m model) renderPermissionHelp(b *strings.Builder, width int) {
@@ -823,6 +906,27 @@ func (m *model) setLogItems() {
 	m.applyFilter()
 }
 
+func (m *model) refreshLogs() {
+	store, err := scheduler.DefaultStore()
+	if err != nil {
+		m.inputError = err.Error()
+		return
+	}
+	logs, err := store.LoadLogs(scheduler.MaxRunLogs)
+	if err != nil {
+		m.inputError = err.Error()
+		return
+	}
+	m.inputError = ""
+	m.logs = logs
+	query := m.searchInput.Value()
+	m.setLogItems()
+	if strings.TrimSpace(query) != "" {
+		m.searchInput.SetValue(query)
+		m.applyFilter()
+	}
+}
+
 func (m *model) setConfirmDeleteItems() {
 	items := []listItem{
 		{title: "Delete this schedule", meta: "delete", filter: "delete", kind: itemConfirm, index: 0},
@@ -967,6 +1071,9 @@ func (m *model) handleBack() (tea.Model, tea.Cmd) {
 	case stageScheduleList, stageLogs:
 		m.startMainStage()
 		return m, nil
+	case stageLogDetail:
+		m.stage = stageLogs
+		return m, nil
 	case stageConfirmDelete:
 		m.stage = stageScheduleList
 		m.pendingDel = nil
@@ -1023,6 +1130,11 @@ func (m *model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.stage == stageScheduleList {
 				return m, m.beginDelete()
 			}
+		case "r":
+			if m.stage == stageLogs {
+				m.refreshLogs()
+				return m, nil
+			}
 		}
 	}
 
@@ -1036,6 +1148,21 @@ func (m *model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFilter()
 	}
 	return m, cmd
+}
+
+func (m *model) updateLogDetail(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "esc":
+			m.stage = stageLogs
+			return m, nil
+		case "q", "ctrl+c":
+			m.err = ErrUserQuit
+			return m, tea.Quit
+		}
+	}
+	return m, nil
 }
 
 func (m *model) beginDelete() tea.Cmd {
@@ -1261,6 +1388,9 @@ func (m *model) startScheduleListStage() {
 func (m *model) startLogsStage() {
 	m.stage = stageLogs
 	m.inputError = ""
+	m.logDetailIndex = -1
+	m.logDetailOutput = ""
+	m.logDetailOutputErr = ""
 	m.searchInput.Focus()
 	m.setLogItems()
 }
@@ -1461,6 +1591,23 @@ func (m *model) selectCurrent() tea.Cmd {
 		entry := m.schedules[item.index]
 		m.startEditFlow(entry)
 		return nil
+	case itemLog:
+		if item.index < 0 || item.index >= len(m.logs) {
+			return nil
+		}
+		m.logDetailIndex = item.index
+		m.logDetailOutput = ""
+		m.logDetailOutputErr = ""
+		entry := m.logs[item.index]
+		if entry.Status != "success" && entry.OutputPath != "" {
+			if output, err := readOutputSnippet(entry.OutputPath, 2000); err != nil {
+				m.logDetailOutputErr = err.Error()
+			} else {
+				m.logDetailOutput = output
+			}
+		}
+		m.stage = stageLogDetail
+		return nil
 	case itemConfirm:
 		if item.index == 0 && m.pendingDel != nil {
 			m.action = Action{
@@ -1537,6 +1684,8 @@ func (m model) headerLines() int {
 		lines += 1
 	case stageLogs:
 		lines += 2
+	case stageLogDetail:
+		lines += 6
 	case stageConfirmDelete:
 		lines += 2
 	default:
@@ -1748,6 +1897,32 @@ func renderWrappedPath(prefix, path string, width int) string {
 	return b.String()
 }
 
+func renderWrappedIndentedLines(text string, width int, indent int) string {
+	if width <= 0 {
+		width = 80
+	}
+	if indent < 0 {
+		indent = 0
+	}
+	lineWidth := width - indent
+	if lineWidth < 10 {
+		lineWidth = width
+	}
+	lines := wrapWithIndent(text, lineWidth, 0)
+	if len(lines) == 0 {
+		return renderLine("", width)
+	}
+	var b strings.Builder
+	prefix := strings.Repeat(" ", indent)
+	for i, line := range lines {
+		b.WriteString(renderLine(prefix+line, width))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
 func splitPathTokens(path string) []string {
 	if path == "" {
 		return nil
@@ -1845,6 +2020,37 @@ func wrapWithIndent(text string, width int, indent int) []string {
 		lines = append(lines, line)
 	}
 	return lines
+}
+
+func readOutputSnippet(path string, max int) (string, error) {
+	if max <= 0 {
+		max = 2000
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	limit := max + 1
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit)))
+	if err != nil {
+		return "", err
+	}
+
+	truncated := len(data) > max
+	if truncated {
+		data = data[:max]
+	}
+
+	text := strings.TrimSpace(string(data))
+	if text == "" {
+		return "", nil
+	}
+	if truncated {
+		text += "\n…"
+	}
+	return text, nil
 }
 
 func sessionCountLabel(count int) string {
@@ -1946,6 +2152,17 @@ func formatAdded(t time.Time, now time.Time) string {
 		layout = "Jan 02 2006"
 	}
 	return fmt.Sprintf("Added %s", t.Format(layout))
+}
+
+func formatDetailTime(t time.Time, now time.Time) string {
+	if t.IsZero() {
+		return ""
+	}
+	layout := "Jan 02 15:04"
+	if t.Year() != now.Year() {
+		layout = "Jan 02 2006 15:04"
+	}
+	return t.Local().Format(layout)
 }
 
 func nextRunForList(entry scheduler.ScheduleEntry, now time.Time) (time.Time, bool) {
@@ -2189,6 +2406,15 @@ func (m *model) findProject(path string) app.Project {
 	return app.Project{}
 }
 
+func (m *model) findSchedule(id string) (scheduler.ScheduleEntry, bool) {
+	for _, schedule := range m.schedules {
+		if schedule.ID == id {
+			return schedule, true
+		}
+	}
+	return scheduler.ScheduleEntry{}, false
+}
+
 func (m *model) logProjectPath(entry scheduler.LogEntry) string {
 	if entry.ProjectPath != "" {
 		return entry.ProjectPath
@@ -2199,6 +2425,13 @@ func (m *model) logProjectPath(entry scheduler.LogEntry) string {
 		}
 	}
 	return ""
+}
+
+func (m *model) logDetailEntry() (scheduler.LogEntry, bool) {
+	if m.logDetailIndex < 0 || m.logDetailIndex >= len(m.logs) {
+		return scheduler.LogEntry{}, false
+	}
+	return m.logs[m.logDetailIndex], true
 }
 
 func (m *model) findModel(value string) app.ModelOption {
