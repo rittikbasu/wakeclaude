@@ -33,9 +33,14 @@ func DiscoverProjects(root string) ([]Project, error) {
 	}
 
 	projects := make([]Project, 0, len(entries))
+	verifyProjectName, _ := WakeClaudeVerifyProjectDirName()
 	var warnings int
 	for _, entry := range entries {
 		if !entry.IsDir() {
+			continue
+		}
+
+		if verifyProjectName != "" && entry.Name() == verifyProjectName {
 			continue
 		}
 
@@ -51,6 +56,9 @@ func DiscoverProjects(root string) ([]Project, error) {
 		}
 
 		displayName, cwd := resolveProjectDisplay(path, sessions)
+		if IsWakeClaudeInternalPath(cwd) {
+			continue
+		}
 		project := Project{
 			Path:         path,
 			DisplayName:  displayName,

@@ -7,6 +7,8 @@ import (
 	"strings"
 )
 
+const wakeClaudeAppName = "WakeClaude"
+
 func DefaultProjectsRoot() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -14,6 +16,60 @@ func DefaultProjectsRoot() (string, error) {
 	}
 
 	return filepath.Join(home, ".claude", "projects"), nil
+}
+
+func WakeClaudeSupportDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	return filepath.Join(home, "Library", "Application Support", wakeClaudeAppName), nil
+}
+
+func WakeClaudeVerifyDir() (string, error) {
+	base, err := WakeClaudeSupportDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(base, "verify"), nil
+}
+
+func ClaudeProjectDirName(path string) (string, error) {
+	abs, err := NormalizePath(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.ReplaceAll(abs, string(os.PathSeparator), "-"), nil
+}
+
+func WakeClaudeVerifyProjectDirName() (string, error) {
+	verifyDir, err := WakeClaudeVerifyDir()
+	if err != nil {
+		return "", err
+	}
+	return ClaudeProjectDirName(verifyDir)
+}
+
+func IsWakeClaudeInternalPath(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	base, err := WakeClaudeSupportDir()
+	if err != nil {
+		return false
+	}
+	base, err = NormalizePath(base)
+	if err != nil {
+		return false
+	}
+	candidate, err := NormalizePath(path)
+	if err != nil {
+		return false
+	}
+	if candidate == base {
+		return true
+	}
+	return strings.HasPrefix(candidate, base+string(os.PathSeparator))
 }
 
 func ExpandHome(path string) (string, error) {

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"syscall"
 )
@@ -107,14 +108,25 @@ func VerifyOAuthToken(token string) error {
 	if _, err := exec.LookPath("claude"); err != nil {
 		return fmt.Errorf("claude not found in PATH")
 	}
+
+	verifyDir, err := WakeClaudeVerifyDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(verifyDir, 0o755); err != nil {
+		return fmt.Errorf("create verify directory: %w", err)
+	}
+
 	cmd := exec.Command("claude", "-p", "ping", "--permission-mode", "plan", "--model", "haiku")
+	cmd.Dir = verifyDir
 	cmd.Env = append(os.Environ(),
 		"CLAUDE_CODE_OAUTH_TOKEN="+token,
 		"ANTHROPIC_API_KEY=",
 		"ANTHROPIC_AUTH_TOKEN=",
 	)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
+	output, cmdErr := cmd.CombinedOutput()
+	cleanupVerifyProject(verifyDir)
+	if cmdErr != nil {
 		msg := strings.TrimSpace(string(output))
 		if msg != "" {
 			return fmt.Errorf(msg)
@@ -122,4 +134,20 @@ func VerifyOAuthToken(token string) error {
 		return fmt.Errorf("token verification failed")
 	}
 	return nil
+}
+
+func cleanupVerifyProject(verifyDir string) {
+	name, err := ClaudeProjectDirName(verifyDir)
+	if err != nil || name == "" {
+		return
+	}
+	if !strings.Contains(name, wakeClaudeAppName) {
+		return
+	}
+	root, err := DefaultProjectsRoot()
+	if err != nil || root == "" {
+		return
+	}
+	projectPath := filepath.Join(root, name)
+	_ = os.RemoveAll(projectPath)
 }
