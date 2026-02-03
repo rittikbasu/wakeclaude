@@ -2,6 +2,8 @@
 
 a tiny macos tui to schedule claude code prompts so your sessions can keep running even when you hit limits or go to sleep.
 
+https://github.com/user-attachments/assets/d8d489d8-e676-47eb-a8bc-f54c677c0405
+
 ## why i built it
 
 i hit the 5 hour session rate limit on my claude plan a lot. work would stop mid‑flow, so i wanted a way to auto‑resume right when the limit resets.
